@@ -1,5 +1,7 @@
-data/raw/
-data/processed/
+data/raw/*
+!data/raw/*.dvc
+data/processed/*
+!data/processed/*.dvc
 __pycache__/
 *.pyc
 .venv/
