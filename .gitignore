@@ -1,11 +1,16 @@
-data/raw/*
-!data/raw/*.dvc
-data/processed/*
-!data/processed/*.dvc
+# Data (managed by DVC; only .dvc pointers are committed)
+data/*/*
+!data/*/*.dvc
+!data/*/.gitignore
+!data/*/.gitkeep
+
+# Python
 __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# MLflow local output
 mlruns/
