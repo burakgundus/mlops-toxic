@@ -1,9 +1,9 @@
+from mlflow.pyfunc import PythonModel
 import joblib
-import mlflow.pyfunc
 import pandas as pd
 
 
-class ToxicClassifier(mlflow.pyfunc.PythonModel):
+class ToxicClassifier(PythonModel):  # type: ignore[misc]
     """Six independent logistic regressions sharing one TF-IDF vectorizer."""
 
     def load_context(self, context) -> None:  # type: ignore[no-untyped-def]

@@ -18,24 +18,26 @@ def validate(df: pd.DataFrame, labels: list[str]) -> bool:
     context = gx.get_context(mode="ephemeral")
     data_source = context.data_sources.add_pandas("jigsaw_source")
     asset = data_source.add_dataframe_asset("train")
-    batch_definition = asset.add_batch_definition_whole_dataframe("full_train")
+    batch_definition = asset.add_batch_definition_whole_dataframe("full_df")
     batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
 
     suite = gx.ExpectationSuite(name="jigsaw_train_suite")
     for column in required:
         suite.add_expectation(gx.expectations.ExpectColumnToExist(column=column))
-    suite.add_expectation(gx.expectations.ExpectColumnValuesToNotBeNull(column="comment_text"))
+        suite.add_expectation(gx.expectations.ExpectColumnValuesToNotBeNull(column=column))
     for label in labels:
         suite.add_expectation(
             gx.expectations.ExpectColumnValuesToBeInSet(column=label, value_set=[0, 1])
         )
 
     result = batch.validate(suite)
+
     if not result.success:
         for r in result.results:
             if not r.success:
-                print("FAILED:", r.expectation_config.type, r.expectation_config.kwargs)
+                print("FAILED:", r.expectation_config.type, r.expectation_config.kwargs)  # type: ignore[union-attr]
         return False
+
     print(f"All {len(result.results)} expectations passed.")
     return True
 

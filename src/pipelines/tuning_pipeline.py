@@ -64,12 +64,13 @@ def run(cfg: dict[str, Any]) -> None:
         return mean_auc
 
     with mlflow.start_run(run_name="optuna-search"):
-        study = optuna.create_study(direction="maximize", study_name="toxic-clf-tune")
-        study.optimize(objective, n_trials=N_TRIALS)
+        study = optuna.create_study(direction="maximize")
+        n_trials = cfg.get("tuning", {}).get("n_trials", N_TRIALS)
+        study.optimize(objective, n_trials=n_trials)
         best = study.best_trial
+
         mlflow.log_params({f"best_{k}": v for k, v in best.params.items()})
-        mlflow.log_metric("best_mean_auc", best.value)
-        print(f"best: {best.params} mean ROC-AUC={best.value:.4f}")
+        mlflow.log_metric("best_val_score", float(best.value))  # type: ignore
 
 
 if __name__ == "__main__":
