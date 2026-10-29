@@ -31,5 +31,65 @@ jobs:
       - name: Type check
         run: poetry run mypy src/
 
+      - name: Strict serving type check
+        run: poetry run mypy --strict src/api/main.py
+
       - name: Tests
         run: poetry run pytest -v
+
+  container:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Compose and build API image
+        run: |
+          docker compose -f docker/docker-compose.yml config --quiet
+          docker build -f docker/api.Dockerfile -t toxic-api:ci .
+
+      - name: Create synthetic smoke model using runtime dependencies
+        run: |
+          mkdir -p "$RUNNER_TEMP/toxic-model"
+          docker run --rm --user 0 --entrypoint python \
+            --env PYTHONPATH=/app \
+            --mount "type=bind,src=$RUNNER_TEMP/toxic-model,dst=/models" \
+            --mount "type=bind,src=$PWD/tests/container_model.py,dst=/smoke.py,readonly" \
+            toxic-api:ci /smoke.py
+          # MLflow creates private artifact directories; the serving UID must read this fixture.
+          sudo chmod -R a+rX "$RUNNER_TEMP/toxic-model"
+
+      - name: Start API with synthetic model
+        run: |
+          docker run -d --name toxic-api-smoke -p 8000:8000 \
+            --env MODEL_URI=/models/model \
+            --mount "type=bind,src=$RUNNER_TEMP/toxic-model,dst=/models,readonly" \
+            toxic-api:ci
+
+      - name: Check readiness and multi-label prediction
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8000/ready; then break; fi
+            sleep 2
+          done
+          curl --fail --silent http://localhost:8000/ready
+          curl --fail --silent http://localhost:8000/predict \
+            -H 'Content-Type: application/json' -d '{"text":"terrible hate"}' > /tmp/prediction.json
+          python - <<'PY'
+          import json
+          with open('/tmp/prediction.json') as stream:
+              result = json.load(stream)
+          labels = {'toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate'}
+          assert set(result['probabilities']) == labels
+          assert all(0 <= p <= 1 for p in result['probabilities'].values())
+          assert result['is_toxic'] is True
+          PY
+          test "$(docker exec toxic-api-smoke id -u)" = 10001
+
+      - name: Container logs
+        if: failure()
+        run: docker logs toxic-api-smoke || true
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f toxic-api-smoke || true

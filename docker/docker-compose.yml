@@ -27,11 +27,39 @@ services:
       --host 0.0.0.0
       --port 5000
       --backend-store-uri postgresql://mlflow:mlflow@postgres:5432/mlflow
-      --default-artifact-root /mlruns
+      --serve-artifacts
+      --artifacts-destination /mlruns
     ports:
       - "5000:5000"
     volumes:
       - mlruns_data:/mlruns
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    environment:
+      APP_ENV: prod
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_URI: ${MODEL_URI:-models:/toxic-clf/Staging}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    # Existing registry versions may refer directly to /mlruns artifacts.
+    volumes:
+      - mlruns_data:/mlruns:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 volumes:
   pgdata:

@@ -11,7 +11,8 @@ Dataset: [Jigsaw Toxic Comment Classification Challenge](https://www.kaggle.com/
 - **Model:** Done. TF-IDF + Logistic Regression (one model per label), Optuna hyperparameter search, MLflow tracking and model registry (`toxic-clf`).
 - **CI/CD & Testing:** Done. GitHub Actions CI pipeline (lint, format, mypy type-checking, pytest unit/integration tests).
 - **Serving:** Done. FastAPI multi-label inference service.
-- **Containerization & Deployment:** In Progress / Planned (Multi-stage Docker build, CD pipeline).
+- **Containerization:** Multi-stage API Dockerfile, Compose integration, CI container smoke check.
+- **Deployment:** Registry publishing and automated deployment planned.
 - **Monitoring:** Planned (Evidently, Prometheus, Grafana).
 
 ## Requirements
@@ -82,6 +83,73 @@ poetry run uvicorn src.api.main:app --reload --port 8000
 ```
 
 Interactive API docs: http://localhost:8000/docs
+
+## Containerized inference
+
+From the repository root, start PostgreSQL, MLflow and the API:
+
+```powershell
+docker compose -f docker/docker-compose.yml up -d --build
+docker compose -f docker/docker-compose.yml ps
+```
+
+The API uses `APP_ENV=prod` and `http://mlflow:5000` on the Compose network.
+The API image installs only the locked main dependency group; DVC, Great Expectations
+and Optuna belong to the training group. A normal `poetry install` still installs
+training and development tools. The runtime contains no Poetry or build tools and
+runs as UID 10001 with one Uvicorn worker (one in-memory copy of the model).
+
+Model loading uses `mlflow.pyfunc`, matching `ToxicClassifier` in the training pipeline.
+`MODEL_URI` defaults to `models:/toxic-clf/Staging`. For a reproducible deployment,
+set it to an explicit registered model version before starting Compose:
+
+```powershell
+$env:MODEL_URI = "models:/toxic-clf/1"  # Replace with an existing version.
+docker compose -f docker/docker-compose.yml up -d --build api
+```
+
+A fresh PostgreSQL volume has no model registry entries. Register a trained model
+before expecting a healthy API. For local training, obtain the DVC data first,
+keep `APP_ENV=local`, start the backing services, then run the pipeline:
+
+```powershell
+docker compose -f docker/docker-compose.yml up -d postgres mlflow
+$env:APP_ENV = "local"
+poetry run python -m entrypoint.train
+docker compose -f docker/docker-compose.yml restart api
+```
+
+If the API has not been created yet, use `up -d --build api` instead of `restart api`.
+Loading happens once per process; restart or recreate the API after the selected
+model becomes available or the Staging version changes.
+
+```powershell
+Invoke-RestMethod http://localhost:8000/ready
+Invoke-RestMethod http://localhost:8000/predict -Method Post `
+  -ContentType "application/json" -Body '{"text":"Thank you for your help."}'
+```
+
+- `/health`: process liveness; includes `model_loaded`.
+- `/ready`: HTTP 200 after model load, otherwise HTTP 503; used by Docker healthcheck.
+- `/predict`: six probabilities, with HTTP 503 if no model is available. There are
+  no mock predictions. Blank input and invalid model output are rejected.
+- `/docs`: interactive API documentation.
+
+MLflow now proxies artifacts over HTTP (`--serve-artifacts --artifacts-destination
+/mlruns`), following the [MLflow artifact serving documentation](https://www.mlflow.org/docs/latest/self-hosting/architecture/tracking-server/).
+Existing experiments retain their recorded artifact location. The read-only
+`/mlruns` mount in the API supports existing versions whose artifacts were stored
+under that absolute path. It does not repair artifacts recorded under a different
+host path. For new HTTP-proxied runs, use a new experiment if the existing experiment
+still points to `/mlruns`; update the selected profile's `experiment_name` first.
+Do not delete existing volumes to migrate experiments.
+
+The Compose credentials are for local development. Registry publishing, deployment
+credentials and monitoring are separate follow-up work.
+
+CI builds the API image only after the Python checks pass. It then creates a tiny
+synthetic pyfunc model with runtime dependencies and checks readiness, prediction
+and the non-root user. This fixture is solely a smoke test, not a trained Jigsaw model.
 
 ## Configuration
 
