@@ -56,6 +56,8 @@ jobs:
             --mount "type=bind,src=$RUNNER_TEMP/toxic-model,dst=/models" \
             --mount "type=bind,src=$PWD/tests/container_model.py,dst=/smoke.py,readonly" \
             toxic-api:ci /smoke.py
+          # MLflow creates private artifact directories; the serving UID must read this fixture.
+          sudo chmod -R a+rX "$RUNNER_TEMP/toxic-model"
 
       - name: Start API with synthetic model
         run: |
