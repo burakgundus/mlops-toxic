@@ -32,7 +32,7 @@ jobs:
         run: poetry run mypy src/
 
       - name: Strict serving type check
-        run: poetry run mypy --strict src/api/main.py
+        run: poetry run mypy --strict src/api/main.py src/ingestion entrypoint/collect_x.py
 
       - name: Tests
         run: poetry run pytest -v

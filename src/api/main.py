@@ -66,6 +66,14 @@ class CommentResponse(BaseModel):
     flagged_labels: list[str]
 
 
+class BatchCommentRequest(BaseModel):
+    comments: list[CommentRequest] = Field(min_length=1, max_length=100)
+
+
+class BatchCommentResponse(BaseModel):
+    results: list[CommentResponse]
+
+
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
@@ -92,25 +100,40 @@ def readiness_check() -> HealthResponse:
 
 @app.post("/predict", response_model=CommentResponse, tags=["Inference"])
 def predict_comment(request: CommentRequest) -> CommentResponse:
-    text = request.text.strip()
-    if not text:
+    return _predict_texts([request.text])[0]
+
+
+@app.post("/predict/batch", response_model=BatchCommentResponse, tags=["Inference"])
+def predict_comments(request: BatchCommentRequest) -> BatchCommentResponse:
+    """Classify up to 100 comments in one model call, preserving input order."""
+    return BatchCommentResponse(results=_predict_texts([item.text for item in request.comments]))
+
+
+def _predict_texts(raw_texts: list[str]) -> list[CommentResponse]:
+    texts = [text.strip() for text in raw_texts]
+    if any(not text for text in texts):
         raise HTTPException(status_code=400, detail="Comment text cannot be empty.")
     if model_pipeline is None:
         raise HTTPException(status_code=503, detail="Model is not available.")
     try:
-        predictions = model_pipeline.predict(pd.DataFrame({"comment_text": [text]}))
-        if len(predictions) != 1 or set(predictions.columns) != set(LABELS):
-            raise ValueError("Model output must contain one row and all six labels")
-        probabilities = {label: float(predictions.iloc[0][label]) for label in LABELS}
-        if any(not math.isfinite(p) or not 0 <= p <= 1 for p in probabilities.values()):
-            raise ValueError("Model returned an invalid probability")
+        predictions = model_pipeline.predict(pd.DataFrame({"comment_text": texts}))
+        if len(predictions) != len(texts) or set(predictions.columns) != set(LABELS):
+            raise ValueError("Model output must contain one row per comment and all six labels")
+        results: list[CommentResponse] = []
+        for index, text in enumerate(texts):
+            probabilities = {label: float(predictions.iloc[index][label]) for label in LABELS}
+            if any(not math.isfinite(p) or not 0 <= p <= 1 for p in probabilities.values()):
+                raise ValueError("Model returned an invalid probability")
+            flagged = [label for label, p in probabilities.items() if p >= 0.5]
+            results.append(
+                CommentResponse(
+                    text=text,
+                    probabilities={label: round(p, 4) for label, p in probabilities.items()},
+                    is_toxic=bool(flagged),
+                    flagged_labels=flagged,
+                )
+            )
     except Exception as exc:
         logger.exception("Inference failed")
         raise HTTPException(status_code=500, detail="Model inference failed.") from exc
-    flagged = [label for label, probability in probabilities.items() if probability >= 0.5]
-    return CommentResponse(
-        text=text,
-        probabilities={label: round(p, 4) for label, p in probabilities.items()},
-        is_toxic=bool(flagged),
-        flagged_labels=flagged,
-    )
+    return results

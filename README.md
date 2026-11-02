@@ -175,6 +175,8 @@ tests/             unit and integration test suite
 
 ## Notes
 
+- X reply collection and batch inference: see [the integration guide](docs/x-integration.md).
+
 - The DVC remote is currently a local folder on one machine. A shared remote is planned.
 - MinIO is not part of the stack yet; MLflow stores artifacts in a Docker volume.
 - Experiment results are stored in MLflow and not in Git.
